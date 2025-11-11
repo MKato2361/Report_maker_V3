@@ -20,7 +20,17 @@ def _init_session():
     ensure_extracted()
 
 def _fmt_minutes(v):
-    return f"{v} 分" if (v is not None and v >= 0) else "—"
+    # Noneや負値はハイフン表記
+    if v is None or v < 0:
+        return "—"
+    # 60分以上は「X時間YY分」
+    if v >= 60:
+        h = v // 60
+        m = v % 60
+        return f"{h}時間{m:02d}分"
+    # 60分未満はそのまま「N分」
+    return f"{v}分"
+
 
 def _toolbar():
     st.markdown('<div class="edit-toolbar">', unsafe_allow_html=True)
