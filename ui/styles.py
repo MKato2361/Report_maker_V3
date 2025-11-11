@@ -14,5 +14,24 @@ def inject_styles():
         .missing { color: #b00020; font-weight: 600; }
         </style>
         """,
+    st.markdown(
+        """
+        <style>
+        /* すべてのボタンを少し薄めに（必要なら値は微調整OK） */
+        .stButton > button {
+          padding: 4px 10px !important;
+          font-size: 0.9rem !important;
+          border-radius: 6px !important;
+          border: 1px solid #ddd !important;
+          background: transparent !important;
+          color: inherit !important;
+        }
+        /* プライマリっぽいもの（保存など）を少しだけ目立たせる */
+        .stButton > button[kind="primary"], .stButton > button:has(svg) {
+          border-color: #cfcfcf !important;
+          background: #f7f7f7 !important;
+        }
+        </style>
+        """,
         unsafe_allow_html=True,
     )
