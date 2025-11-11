@@ -151,38 +151,38 @@ def render_app():
        # _toolbar()
        # data = get_working_dict()
 
-from ui.components import render_field  # 既存
+        from ui.components import render_field  # 既存
 
-with st.expander("① 編集対象（まとめて編集・すべて必須）", expanded=True):
+        with st.expander("① 編集対象（まとめて編集・すべて必須）", expanded=True):
     # --- ここが新規: 枠内の薄いボタン行（右寄せ） ---
-    c_left, c_mid, c_right = st.columns([1, 1, 1])
-    with c_right:
+        c_left, c_mid, c_right = st.columns([1, 1, 1])
+        with c_right:
         if not st.session_state.get("edit_mode"):
             if st.button("✏️ 編集モードに入る", key="enter_edit_inline"):
                 enter_edit_mode()
                 st.rerun()
         else:
             c1, c2 = st.columns([1, 1])
-            with c1:
-                if st.button("✅ すべて保存", key="save_edit_inline"):
-                    save_edit()
-                    st.success("保存しました")
-                    st.rerun()
-            with c2:
-                if st.button("↩️ 変更を破棄", key="cancel_edit_inline"):
-                    cancel_edit()
-                    st.info("変更を破棄しました")
-                    st.rerun()
+        with c1:
+            if st.button("✅ すべて保存", key="save_edit_inline"):
+                save_edit()
+                st.success("保存しました")
+                st.rerun()
+        with c2:
+            if st.button("↩️ 変更を破棄", key="cancel_edit_inline"):
+                cancel_edit()
+                st.info("変更を破棄しました")
+                st.rerun()
     # --- ここまでボタン行 ---
 
     # 入力フィールド群（既存のまま）
-    render_field("通報者", "通報者", 1, editable_in_bulk=True)
-    render_field("受信内容", "受信内容", 4, editable_in_bulk=True)
-    render_field("現着状況", "現着状況", 5, editable_in_bulk=True)
-    render_field("原因", "原因", 5, editable_in_bulk=True)
-    render_field("処置内容", "処置内容", 5, editable_in_bulk=True)
-    render_field("処理修理後（Step2入力値）", "処理修理後", 1, editable_in_bulk=True)
-    render_field("所属（Step2入力値）", "所属", 1, editable_in_bulk=True)
+            render_field("通報者", "通報者", 1, editable_in_bulk=True)
+            render_field("受信内容", "受信内容", 4, editable_in_bulk=True)
+            render_field("現着状況", "現着状況", 5, editable_in_bulk=True)
+            render_field("原因", "原因", 5, editable_in_bulk=True)
+            render_field("処置内容", "処置内容", 5, editable_in_bulk=True)
+            render_field("処理修理後（Step2入力値）", "処理修理後", 1, editable_in_bulk=True)
+            render_field("所属（Step2入力値）", "所属", 1, editable_in_bulk=True)
 
 
         with st.expander("② 基本情報（表示）", expanded=True):
