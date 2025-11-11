@@ -8,6 +8,7 @@ from core.state import (
 )
 from core.parsing import extract_fields, minutes_between
 from core.excel_writer import fill_template_xlsx, build_filename
+from ui.components import render_field  # ← ここはモジュール先頭でインポート
 
 def _init_session():
     if "step" not in st.session_state: st.session_state.step = 1
@@ -30,38 +31,6 @@ def _fmt_minutes(v):
         return f"{h}時間{m:02d}分"
     # 60分未満はそのまま「N分」
     return f"{v}分"
-
-
-def _toolbar():
-    st.markdown('<div class="edit-toolbar">', unsafe_allow_html=True)
-    tb1, tb2, tb3, tb4 = st.columns([0.22, 0.22, 0.22, 0.34])
-    with tb1:
-        if not st.session_state.edit_mode:
-            if st.button("✏️ 一括編集モードに入る", use_container_width=True):
-                enter_edit_mode(); st.rerun()
-        else:
-            if st.button("✅ すべて保存", type="primary", use_container_width=True):
-                save_edit(); st.success("保存しました"); st.rerun()
-    with tb2:
-        if st.session_state.edit_mode:
-            if st.button("↩️ 変更を破棄", use_container_width=True):
-                cancel_edit(); st.info("変更を破棄しました"); st.rerun()
-        else:
-            st.write("")
-    with tb3:
-        working = get_working_dict()
-        miss = [k for k in REQUIRED_KEYS if (k in REQUIRED_KEYS) and not (working.get(k) or "").strip()]
-        if miss:
-            st.warning("必須未入力: " + "・".join(miss))
-        else:
-            st.info("必須は入力済み")
-    with tb4:
-        mode = "ON" if st.session_state.edit_mode else "OFF"
-        st.markdown(
-            f"**編集モード:** {mode} " + ("" if not st.session_state.edit_mode else '<span class="edit-badge">一括編集中（指定項目のみ編集可）</span>'),
-            unsafe_allow_html=True
-        )
-    st.markdown('</div>', unsafe_allow_html=True)
 
 def render_app():
     _init_session()
@@ -148,35 +117,28 @@ def render_app():
                 st.session_state.extracted["処理修理後"] = st.session_state.get("processing_after", "")
                 st.session_state.extracted["_processing_after_initialized"] = True
 
-       # _toolbar()
-       # data = get_working_dict()
-
-        
-from ui.components import render_field  # 既存
-
+        # ① 編集対象：枠内に薄めボタンを配置（編集モードの制御）
         with st.expander("① 編集対象（まとめて編集・すべて必須）", expanded=True):
-    # --- ここが新規: 枠内の薄いボタン行（右寄せ） ---
-        c_left, c_mid, c_right = st.columns([1, 1, 1])
-        with c_right:
-        if not st.session_state.get("edit_mode"):
-            if st.button("✏️ 編集モードに入る", key="enter_edit_inline"):
-                enter_edit_mode()
-                st.rerun()
-        else:
-            c1, c2 = st.columns([1, 1])
-        with c1:
-            if st.button("✅ すべて保存", key="save_edit_inline"):
-                save_edit()
-                st.success("保存しました")
-                st.rerun()
-        with c2:
-            if st.button("↩️ 変更を破棄", key="cancel_edit_inline"):
-                cancel_edit()
-                st.info("変更を破棄しました")
-                st.rerun()
-    # --- ここまでボタン行 ---
+            c_left, c_mid, c_right = st.columns([1, 1, 1])
+            with c_right:
+                if not st.session_state.get("edit_mode"):
+                    if st.button("✏️ 編集モードに入る", key="enter_edit_inline"):
+                        enter_edit_mode()
+                        st.rerun()
+                else:
+                    c1, c2 = st.columns([1, 1])
+                    with c1:
+                        if st.button("✅ すべて保存", key="save_edit_inline"):
+                            save_edit()
+                            st.success("保存しました")
+                            st.rerun()
+                    with c2:
+                        if st.button("↩️ 変更を破棄", key="cancel_edit_inline"):
+                            cancel_edit()
+                            st.info("変更を破棄しました")
+                            st.rerun()
 
-    # 入力フィールド群（既存のまま）
+            # 入力フィールド群
             render_field("通報者", "通報者", 1, editable_in_bulk=True)
             render_field("受信内容", "受信内容", 4, editable_in_bulk=True)
             render_field("現着状況", "現着状況", 5, editable_in_bulk=True)
@@ -185,7 +147,7 @@ from ui.components import render_field  # 既存
             render_field("処理修理後（Step2入力値）", "処理修理後", 1, editable_in_bulk=True)
             render_field("所属（Step2入力値）", "所属", 1, editable_in_bulk=True)
 
-
+        # ② 基本情報（表示）
         with st.expander("② 基本情報（表示）", expanded=True):
             render_field("管理番号", "管理番号", 1)
             render_field("物件名", "物件名", 1)
@@ -195,6 +157,8 @@ from ui.components import render_field  # 既存
             render_field("契約種別", "契約種別", 1)
             render_field("メーカー", "メーカー", 1)
 
+        # ③ 受付・現着・完了（表示）
+        data = get_working_dict()
         with st.expander("③ 受付・現着・完了（表示）", expanded=True):
             render_field("受信時刻", "受信時刻", 1)
             render_field("現着時刻", "現着時刻", 1)
@@ -209,6 +173,7 @@ from ui.components import render_field  # 既存
             with c2: st.info(f"作業時間: { _fmt_minutes(t_work) }")
             with c3: st.info(f"受付〜完了: { _fmt_minutes(t_recv_to_done) }")
 
+        # ④ その他情報（表示）
         with st.expander("④ その他情報（表示）", expanded=False):
             render_field("対応者", "対応者", 1)
             render_field("送信者", "送信者", 1)
