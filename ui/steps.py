@@ -180,9 +180,9 @@ def render_app():
             t_recv_to_done = minutes_between(data.get("受信時刻"), data.get("完了時刻"))
 
             c1, c2, c3 = st.columns(3)
-            with c1: st.info(f"受付〜現着時間: { _fmt_minutes(t_recv_to_arrive) }")
+            with c1: st.info(f"受付〜現着: { _fmt_minutes(t_recv_to_arrive) }")
             with c2: st.info(f"作業時間: { _fmt_minutes(t_work) }")
-            with c3: st.info(f"受付〜完了時間: { _fmt_minutes(t_recv_to_done) }")
+            with c3: st.info(f"受付〜完了: { _fmt_minutes(t_recv_to_done) }")
 
         with st.expander("④ その他情報（表示）", expanded=False):
             render_field("対応者", "対応者", 1)
