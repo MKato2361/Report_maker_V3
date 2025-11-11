@@ -144,8 +144,8 @@ def render_app():
             render_field("現着状況", "現着状況", 5, editable_in_bulk=True)
             render_field("原因", "原因", 5, editable_in_bulk=True)
             render_field("処置内容", "処置内容", 5, editable_in_bulk=True)
-            render_field("処理修理後（Step2入力値）", "処理修理後", 1, editable_in_bulk=True)
-            render_field("所属（Step2入力値）", "所属", 1, editable_in_bulk=True)
+            render_field("処理修理後", "処理修理後", 1, editable_in_bulk=True)
+            render_field("所属", "所属", 1, editable_in_bulk=True)
 
         # ② 基本情報（表示）
         with st.expander("② 基本情報（表示）", expanded=True):
