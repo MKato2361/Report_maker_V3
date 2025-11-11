@@ -149,7 +149,7 @@ def render_app():
                 st.session_state.extracted["_processing_after_initialized"] = True
 
        # _toolbar()
-        data = get_working_dict()
+       # data = get_working_dict()
 
 from ui.components import render_field  # 既存
 
