@@ -22,7 +22,7 @@ def render_field(label: str, key: str, max_lines: int = 1, placeholder: str = ""
 
     cols = st.columns([0.22, 0.78])
     with cols[0]:
-        st.markdown(("🔴 **" if missing else "**") + f"{label}**")
+        st.markdown(("⚠️　**" if missing else "**") + f"{label}**")
 
     with cols[1]:
         if st.session_state.get("edit_mode") and editable_in_bulk:
