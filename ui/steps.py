@@ -1,4 +1,4 @@
-# report_maker/ui/steps.py
+# ui/steps.py  — Plan A: トークン到着で認証もスキップしてStep3へ直行版
 import os, sys, traceback
 import streamlit as st
 from core.settings import REQUIRED_KEYS
@@ -8,7 +8,9 @@ from core.state import (
 )
 from core.parsing import extract_fields, minutes_between
 from core.excel_writer import fill_template_xlsx, build_filename
-from ui.components import render_field  # ← ここはモジュール先頭でインポート
+from core.inbox_loader import load_from_sheet_by_token
+from ui.components import render_field
+
 
 def _init_session():
     if "step" not in st.session_state: st.session_state.step = 1
@@ -18,40 +20,76 @@ def _init_session():
     if "template_xlsx_bytes" not in st.session_state: st.session_state.template_xlsx_bytes = None
     if "edit_mode" not in st.session_state: st.session_state.edit_mode = False
     if "edit_buffer" not in st.session_state: st.session_state.edit_buffer = {}
+    if "token_loaded" not in st.session_state: st.session_state.token_loaded = False
     ensure_extracted()
 
+
 def _fmt_minutes(v):
-    # Noneや負値はハイフン表記
     if v is None or v < 0:
         return "—"
-    # 60分以上は「X時間YY分」
     if v >= 60:
         h = v // 60
         m = v % 60
         return f"{h}時間{m:02d}分"
-    # 60分未満はそのまま「N分」
     return f"{v}分"
+
+
+def _maybe_load_by_token():
+    """
+    ★ Plan A:
+    token= がURLに付いていたら、シートから行を取り込み、
+    そのまま認証も通して Step3 へ直行させる。
+    """
+    token = None
+    try:
+        # Streamlit 1.38+
+        qp = st.query_params
+        token = qp.get("token")
+        if isinstance(token, list):
+            token = token[0] if token else None
+    except Exception:
+        # Fallback for older versions
+        token = st.experimental_get_query_params().get("token", [None])[0]
+
+    if token and not st.session_state.get("token_loaded"):
+        rec = load_from_sheet_by_token(token)
+        if rec:
+            # 🔴 トークンを知っていればOKという運用：認証も通す
+            st.session_state.authed = True
+            st.session_state.extracted = rec
+            st.session_state.step = 3
+            st.session_state.token_loaded = True
+            # 反映のため再実行
+            try:
+                st.rerun()
+            except Exception:
+                st.experimental_rerun()
+
 
 def render_app():
     _init_session()
+    _maybe_load_by_token()
     PASSCODE = get_passcode()
 
-    # Step 1
+    # Step 1: 認証
     if st.session_state.step == 1:
         st.subheader("Step 1. パスコード認証")
         if not PASSCODE:
-            st.info("（注意）現在、PASSCODEがSecrets/環境変数に未設定です。開発モード想定で空文字として扱います。")
+            st.info("（注意）現在、PASSCODEが未設定です。開発モード想定で空文字として扱います。")
         pw = st.text_input("パスコードを入力してください", type="password")
         if st.button("次へ", use_container_width=True):
             if pw == PASSCODE:
                 st.session_state.authed = True
                 st.session_state.step = 2
-                st.rerun()
+                try:
+                    st.rerun()
+                except Exception:
+                    st.experimental_rerun()
             else:
                 st.error("パスコードが違います。")
         return
 
-    # Step 2
+    # Step 2: 本文貼付け / 所属 / テンプレ選択
     if st.session_state.step == 2 and st.session_state.authed:
         st.subheader("Step 2. メール本文の貼り付け / 所属 / テンプレ選択")
 
@@ -99,16 +137,22 @@ def render_app():
                     st.session_state.extracted = extract_fields(text)
                     st.session_state.extracted["所属"] = st.session_state.affiliation
                     st.session_state.step = 3
-                    st.rerun()
+                    try:
+                        st.rerun()
+                    except Exception:
+                        st.experimental_rerun()
         with c2:
             if st.button("クリア", use_container_width=True):
                 st.session_state.extracted = None
                 st.session_state.affiliation = ""
                 st.session_state.processing_after = ""
-                st.rerun()
+                try:
+                    st.rerun()
+                except Exception:
+                    st.experimental_rerun()
         return
 
-    # Step 3
+    # Step 3: 確認・編集 → Excel生成
     if st.session_state.step == 3 and st.session_state.authed:
         st.subheader("Step 3. 抽出結果の確認・編集 → Excel生成")
 
@@ -117,26 +161,35 @@ def render_app():
                 st.session_state.extracted["処理修理後"] = st.session_state.get("processing_after", "")
                 st.session_state.extracted["_processing_after_initialized"] = True
 
-        # ① 編集対象：枠内に薄めボタンを配置（編集モードの制御）
+        # ① 編集対象（まとめて編集）：枠内に薄めボタン
         with st.expander("① 編集対象（まとめて編集・すべて必須）", expanded=True):
             c_left, c_mid, c_right = st.columns([1, 1, 1])
             with c_right:
                 if not st.session_state.get("edit_mode"):
                     if st.button("✏️ 編集モードに入る", key="enter_edit_inline"):
                         enter_edit_mode()
-                        st.rerun()
+                        try:
+                            st.rerun()
+                        except Exception:
+                            st.experimental_rerun()
                 else:
                     c1, c2 = st.columns([1, 1])
                     with c1:
                         if st.button("✅ すべて保存", key="save_edit_inline"):
                             save_edit()
                             st.success("保存しました")
-                            st.rerun()
+                            try:
+                                st.rerun()
+                            except Exception:
+                                st.experimental_rerun()
                     with c2:
                         if st.button("↩️ 変更を破棄", key="cancel_edit_inline"):
                             cancel_edit()
                             st.info("変更を破棄しました")
-                            st.rerun()
+                            try:
+                                st.rerun()
+                            except Exception:
+                                st.experimental_rerun()
 
             # 入力フィールド群
             render_field("通報者", "通報者", 1, editable_in_bulk=True)
@@ -144,8 +197,8 @@ def render_app():
             render_field("現着状況", "現着状況", 5, editable_in_bulk=True)
             render_field("原因", "原因", 5, editable_in_bulk=True)
             render_field("処置内容", "処置内容", 5, editable_in_bulk=True)
-            render_field("処理修理後", "処理修理後", 1, editable_in_bulk=True)
-            render_field("所属", "所属", 1, editable_in_bulk=True)
+            render_field("処理修理後（Step2入力値）", "処理修理後", 1, editable_in_bulk=True)
+            render_field("所属（Step2入力値）", "所属", 1, editable_in_bulk=True)
 
         # ② 基本情報（表示）
         with st.expander("② 基本情報（表示）", expanded=True):
@@ -183,6 +236,7 @@ def render_app():
 
         st.divider()
 
+        # Excel 生成ボタン
         try:
             is_editing = st.session_state.get("edit_mode", False)
             gen_data = get_working_dict()
@@ -224,7 +278,11 @@ def render_app():
         c1, c2 = st.columns(2)
         with c1:
             if st.button("Step2に戻る", use_container_width=True):
-                st.session_state.step = 2; st.rerun()
+                st.session_state.step = 2
+                try:
+                    st.rerun()
+                except Exception:
+                    st.experimental_rerun()
         with c2:
             if st.button("最初に戻る", use_container_width=True):
                 st.session_state.step = 1
@@ -233,9 +291,16 @@ def render_app():
                 st.session_state.processing_after = ""
                 st.session_state.edit_mode = False
                 st.session_state.edit_buffer = {}
-                st.rerun()
+                try:
+                    st.rerun()
+                except Exception:
+                    st.experimental_rerun()
         return
 
-    # 認証未完了・その他
+    # 認証未了の場合はStep1へ
     st.warning("認証が必要です。Step1に戻ります。")
     st.session_state.step = 1
+    try:
+        st.rerun()
+    except Exception:
+        st.experimental_rerun()
