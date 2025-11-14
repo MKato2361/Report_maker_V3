@@ -30,6 +30,7 @@ def _get_csv_url() -> str:
 def _load_dataframe() -> pd.DataFrame:
     """
     Google スプレッドシートの CSV (export?format=csv...) を DataFrame で取得。
+    1行目はヘッダーだが、列順だけを信用し、列名はほぼ無視する。
     """
     url = _get_csv_url()
     df = pd.read_csv(url, dtype=str)
@@ -40,12 +41,34 @@ def _load_dataframe() -> pd.DataFrame:
 def load_from_sheet_by_token(token: str) -> Dict[str, str]:
     """
     inbox シート由来の CSV から token 行を 1件だけ取得し、
-    Step3 用の辞書（extracted と同じキー構成）を返す。
+    列の“位置”を決め打ちして Step3 用の辞書を返す。
 
-    ★ ポイント：
-      - 列名が多少ブレていても alias で正規化
-      - 既に入っている値を「空文字」で上書きしない（長い方を優先）
-      - 処置内容は列名と列位置の両方から最後まで粘って拾う
+    ★ 前提：inbox の列順が以下で固定されていること
+        A: token
+        B: 管理番号
+        C: 物件名
+        D: 住所
+        E: 窓口会社
+        F: メーカー
+        G: 制御方式
+        H: 契約種別
+        I: 受信時刻
+        J: 現着時刻
+        K: 完了時刻
+        L: 通報者
+        M: 受信内容
+        N: 現着状況
+        O: 原因
+        P: 処置内容
+        Q: 対応者
+        R: 送信者
+        S: 完了連絡先1
+        T: 受付番号
+        U: 受付URL
+        V: 現着完了登録URL
+        W: 所属
+        X: 処理修理後
+        Y: 作業時間_分
     """
     df = _load_dataframe()
     if "token" not in df.columns:
@@ -55,80 +78,53 @@ def load_from_sheet_by_token(token: str) -> Dict[str, str]:
     if sub.empty:
         raise KeyError(f"token={token!r} の行が見つかりません。")
 
-    # 単一行の Series
-    row_series = sub.iloc[0]
+    # 単一行の値を「配列」として取得（列名は一切信用しない）
+    row = sub.iloc[0]
+    values = list(row)
 
-    # ヘッダー名 → 正規化されたキーへのマッピング
-    header_aliases: Dict[str, str] = {
-        "窓口": "窓口会社",
-        "窓口会社": "窓口会社",
-        "現着時間": "現着時刻",
-        "現着時刻": "現着時刻",
-        "完了時間": "完了時刻",
-        "完了時刻": "完了時刻",
-        "処置": "処置内容",
-        "処置内容": "処置内容",
-        "詳細はこちら": "受付URL",
-        "受付URL": "受付URL",
-        "現着・完了登録はこちら": "現着完了登録URL",
-        "現着完了登録URL": "現着完了登録URL",
-    }
+    # 想定キー（列順と1対1対応）
+    pos_keys = [
+        "token",        # A列
+        "管理番号",      # B列
+        "物件名",        # C列
+        "住所",          # D列
+        "窓口会社",      # E列
+        "メーカー",      # F列
+        "制御方式",      # G列
+        "契約種別",      # H列
+        "受信時刻",      # I列
+        "現着時刻",      # J列
+        "完了時刻",      # K列
+        "通報者",        # L列
+        "受信内容",      # M列
+        "現着状況",      # N列
+        "原因",          # O列
+        "処置内容",      # P列 ★ここが確実に処置内容
+        "対応者",        # Q列
+        "送信者",        # R列
+        "完了連絡先1",    # S列
+        "受付番号",      # T列
+        "受付URL",       # U列
+        "現着完了登録URL",# V列
+        "所属",          # W列
+        "処理修理後",     # X列
+        "作業時間_分",    # Y列
+    ]
 
-    rec: Dict[str, str] = {}
+    # CSV 側の列数が足りなければ空文字で埋める
+    if len(values) < len(pos_keys):
+        values = values + [""] * (len(pos_keys) - len(values))
 
-    # 1) 行全体を alias を使って辞書化（非空のみ・長い方優先）
-    for col, val in row_series.to_dict().items():
-        if col == "token":
-            continue
-        v = (val or "").strip()
-        col_norm = str(col).strip()
-        key = header_aliases.get(col_norm, col_norm)
+    # 余分な列があっても無視（pos_keys の長さに合わせる）
+    values = values[:len(pos_keys)]
 
-        if not v:
-            # 空はここでは入れない（後で setdefault で補充）
-            continue
+    # 位置で dict 化
+    data_by_pos = {k: (str(v).strip() if v is not None else "") for k, v in zip(pos_keys, values)}
 
-        # すでに値がある場合は「長い方」を優先（空や短い値で潰さない）
-        if key not in rec or len(v) > len(rec.get(key, "")):
-            rec[key] = v
+    # token は返さない（必要ならここで返してもよいが、UI 側では使っていない）
+    rec: Dict[str, str] = {k: v for k, v in data_by_pos.items() if k != "token"}
 
-    # 2) 処置内容 専用の保険
-    #    - まだ空なら DataFrame から直接拾う
-    if not (rec.get("処置内容") or "").strip():
-        # a) 正確な列名「処置内容」が存在する場合
-        if "処置内容" in sub.columns:
-            v = str(sub["処置内容"].iloc[0] or "").strip()
-            if v:
-                rec["処置内容"] = v
-
-        # b) それでも空なら「処置」を含む列を総当たり
-        if not (rec.get("処置内容") or "").strip():
-            for col in sub.columns:
-                if col == "token":
-                    continue
-                col_str = str(col).strip()
-                if "処置" in col_str:
-                    v = str(sub[col].iloc[0] or "").strip()
-                    if v:
-                        rec["処置内容"] = v
-                        break
-
-        # c) さらに保険：列の並び順から P列(処置内容) を決め打ちで読む
-        #    inbox ヘッダー：
-        #      A:token, B:管理番号, ... P:処置内容, ...
-        if not (rec.get("処置内容") or "").strip():
-            cols = list(sub.columns)
-            if len(cols) >= 16:  # 0〜15 で少なくとも16列
-                try:
-                    # 処置内容は 0始まりで 15 番目（P列）
-                    col_name_by_pos = cols[15]
-                    v = str(sub[col_name_by_pos].iloc[0] or "").strip()
-                    if v:
-                        rec["処置内容"] = v
-                except Exception:
-                    pass
-
-    # 想定キーを一通り揃えておく（存在しないものは空文字に）
+    # 念のため、想定キーをすべて埋めておく
     expected_keys = [
         "管理番号",
         "物件名",
