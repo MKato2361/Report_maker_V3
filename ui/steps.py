@@ -13,14 +13,24 @@ from ui.components import render_field
 
 
 def _init_session():
-    if "step" not in st.session_state: st.session_state.step = 1
-    if "authed" not in st.session_state: st.session_state.authed = False
-    if "extracted" not in st.session_state: st.session_state.extracted = None
-    if "affiliation" not in st.session_state: st.session_state.affiliation = ""
-    if "template_xlsx_bytes" not in st.session_state: st.session_state.template_xlsx_bytes = None
-    if "edit_mode" not in st.session_state: st.session_state.edit_mode = False
-    if "edit_buffer" not in st.session_state: st.session_state.edit_buffer = {}
-    if "token_loaded" not in st.session_state: st.session_state.token_loaded = False
+    if "step" not in st.session_state:
+        st.session_state.step = 1
+    if "authed" not in st.session_state:
+        st.session_state.authed = False
+    if "extracted" not in st.session_state:
+        st.session_state.extracted = None
+    if "affiliation" not in st.session_state:
+        st.session_state.affiliation = ""
+    if "template_xlsx_bytes" not in st.session_state:
+        st.session_state.template_xlsx_bytes = None
+    if "edit_mode" not in st.session_state:
+        st.session_state.edit_mode = False
+    if "edit_buffer" not in st.session_state:
+        st.session_state.edit_buffer = {}
+    if "token_loaded" not in st.session_state:
+        st.session_state.token_loaded = False
+    if "processing_after" not in st.session_state:
+        st.session_state.processing_after = ""
     ensure_extracted()
 
 
@@ -42,7 +52,7 @@ def _maybe_load_by_token():
     """
     token = None
     try:
-        # Streamlit 1.38+
+        # Streamlit 1.38+ の query_params
         qp = st.query_params
         token = qp.get("token")
         if isinstance(token, list):
@@ -51,19 +61,33 @@ def _maybe_load_by_token():
         # Fallback for older versions
         token = st.experimental_get_query_params().get("token", [None])[0]
 
-    if token and not st.session_state.get("token_loaded"):
+    # すでにトークン読込済みなら再処理しない
+    if not token or st.session_state.get("token_loaded"):
+        return
+
+    try:
         rec = load_from_sheet_by_token(token)
-        if rec:
-            # 🔴 トークンを知っていればOKという運用：認証も通す
-            st.session_state.authed = True
-            st.session_state.extracted = rec
-            st.session_state.step = 3
-            st.session_state.token_loaded = True
-            # 反映のため再実行
-            try:
-                st.rerun()
-            except Exception:
-                st.experimental_rerun()
+    except Exception as e:
+        st.warning(f"トークンからの読み込みに失敗しました: {e}")
+        return
+
+    if rec:
+        # 🔴 トークンを知っていればOKという運用：認証も通す
+        st.session_state.authed = True
+        # inbox の列名 = キーそのままを全部使う
+        st.session_state.extracted = rec.copy()
+
+        # 所属 / 処理修理後 も session_state に反映しておく
+        st.session_state.affiliation = rec.get("所属", "") or ""
+        st.session_state.processing_after = rec.get("処理修理後", "") or ""
+
+        st.session_state.step = 3
+        st.session_state.token_loaded = True
+        # 反映のため再実行
+        try:
+            st.rerun()
+        except Exception:
+            st.experimental_rerun()
 
 
 def render_app():
@@ -95,6 +119,8 @@ def render_app():
 
         template_path = "template.xlsm"
         tpl_col1, tpl_col2 = st.columns([0.55, 0.45])
+
+        # ① 既定テンプレ
         with tpl_col1:
             st.caption("① 既定：template.xlsm を探します")
             if os.path.exists(template_path) and not st.session_state.template_xlsx_bytes:
@@ -109,6 +135,7 @@ def render_app():
             else:
                 st.warning("既定テンプレートが見つかりません。②のアップロードをご利用ください。")
 
+        # ② 手動アップロード
         with tpl_col2:
             st.caption("② またはテンプレ.xlsmをアップロード")
             up = st.file_uploader("テンプレート（.xlsm）", type=["xlsm"], accept_multiple_files=False)
@@ -120,13 +147,23 @@ def render_app():
             st.error("テンプレートが未準備です。template.xlsm を配置するか、上でアップロードしてください。")
             st.stop()
 
+        # 所属
         aff = st.text_input("所属", value=st.session_state.affiliation)
         st.session_state.affiliation = aff
 
-        processing_after = st.text_input("処理修理後（任意）", value=st.session_state.get("processing_after", ""))
+        # 処理修理後（任意）
+        processing_after = st.text_input(
+            "処理修理後（任意）",
+            value=st.session_state.get("processing_after", "")
+        )
         st.session_state["processing_after"] = processing_after
 
-        text = st.text_area("故障完了メール（本文）を貼り付け", height=240, placeholder="ここにメール本文を貼り付け...")
+        # 本文入力
+        text = st.text_area(
+            "故障完了メール（本文）を貼り付け",
+            height=240,
+            placeholder="ここにメール本文を貼り付け..."
+        )
 
         c1, c2 = st.columns(2)
         with c1:
@@ -156,6 +193,7 @@ def render_app():
     if st.session_state.step == 3 and st.session_state.authed:
         st.subheader("Step 3. 抽出結果の確認・編集 → Excel生成")
 
+        # Step2で入力した「処理修理後」を一度だけ抽出結果に反映
         if "processing_after" in st.session_state and st.session_state.extracted is not None:
             if not st.session_state.extracted.get("_processing_after_initialized"):
                 st.session_state.extracted["処理修理後"] = st.session_state.get("processing_after", "")
@@ -191,7 +229,7 @@ def render_app():
                             except Exception:
                                 st.experimental_rerun()
 
-            # 入力フィールド群
+            # 入力フィールド群（まとめて編集対象）
             render_field("通報者", "通報者", 1, editable_in_bulk=True)
             render_field("受信内容", "受信内容", 4, editable_in_bulk=True)
             render_field("現着状況", "現着状況", 5, editable_in_bulk=True)
@@ -222,9 +260,12 @@ def render_app():
             t_recv_to_done = minutes_between(data.get("受信時刻"), data.get("完了時刻"))
 
             c1, c2, c3 = st.columns(3)
-            with c1: st.info(f"受付〜現着: { _fmt_minutes(t_recv_to_arrive) }")
-            with c2: st.info(f"作業時間: { _fmt_minutes(t_work) }")
-            with c3: st.info(f"受付〜完了: { _fmt_minutes(t_recv_to_done) }")
+            with c1:
+                st.info(f"受付〜現着: { _fmt_minutes(t_recv_to_arrive) }")
+            with c2:
+                st.info(f"作業時間: { _fmt_minutes(t_work) }")
+            with c3:
+                st.info(f"受付〜完了: { _fmt_minutes(t_recv_to_done) }")
 
         # ④ その他情報（表示）
         with st.expander("④ その他情報（表示）", expanded=False):
