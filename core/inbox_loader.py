@@ -43,9 +43,9 @@ def load_from_sheet_by_token(token: str) -> Dict[str, str]:
     Step3 用の辞書（extracted と同じキー構成）を返す。
 
     ★ ポイント：
-      - シート側のヘッダーが多少違っていても、ここで正規化する
-      - 特に「処置内容」は DataFrame の列から“直接”拾う保険を入れて、
-        ヘッダー名の微妙なズレや不可視文字の影響を受けにくくする
+      - 列名が多少ブレていても alias で正規化
+      - 既に入っている値を「空文字」で上書きしない（長い方を優先）
+      - 処置内容は列名と列位置の両方から最後まで粘って拾う
     """
     df = _load_dataframe()
     if "token" not in df.columns:
@@ -68,39 +68,65 @@ def load_from_sheet_by_token(token: str) -> Dict[str, str]:
         "完了時刻": "完了時刻",
         "処置": "処置内容",
         "処置内容": "処置内容",
-        "受付URL": "受付URL",
         "詳細はこちら": "受付URL",
-        "現着完了登録URL": "現着完了登録URL",
+        "受付URL": "受付URL",
         "現着・完了登録はこちら": "現着完了登録URL",
+        "現着完了登録URL": "現着完了登録URL",
     }
 
     rec: Dict[str, str] = {}
 
-    # まず alias を使って行全体を辞書化
+    # 1) 行全体を alias を使って辞書化（非空のみ・長い方優先）
     for col, val in row_series.to_dict().items():
         if col == "token":
             continue
         v = (val or "").strip()
         col_norm = str(col).strip()
         key = header_aliases.get(col_norm, col_norm)
-        rec[key] = v
 
-    # ★ 「処置内容」を DataFrame の列からダイレクトに取得する保険
+        if not v:
+            # 空はここでは入れない（後で setdefault で補充）
+            continue
+
+        # すでに値がある場合は「長い方」を優先（空や短い値で潰さない）
+        if key not in rec or len(v) > len(rec.get(key, "")):
+            rec[key] = v
+
+    # 2) 処置内容 専用の保険
+    #    - まだ空なら DataFrame から直接拾う
     if not (rec.get("処置内容") or "").strip():
-        # 1) 正確な列名「処置内容」が存在する場合
+        # a) 正確な列名「処置内容」が存在する場合
         if "処置内容" in sub.columns:
             v = str(sub["処置内容"].iloc[0] or "").strip()
             if v:
                 rec["処置内容"] = v
-        # 2) それでも空なら、「処置」を含む列を総当たりで探す
+
+        # b) それでも空なら「処置」を含む列を総当たり
         if not (rec.get("処置内容") or "").strip():
             for col in sub.columns:
+                if col == "token":
+                    continue
                 col_str = str(col).strip()
                 if "処置" in col_str:
                     v = str(sub[col].iloc[0] or "").strip()
                     if v:
                         rec["処置内容"] = v
                         break
+
+        # c) さらに保険：列の並び順から P列(処置内容) を決め打ちで読む
+        #    inbox ヘッダー：
+        #      A:token, B:管理番号, ... P:処置内容, ...
+        if not (rec.get("処置内容") or "").strip():
+            cols = list(sub.columns)
+            if len(cols) >= 16:  # 0〜15 で少なくとも16列
+                try:
+                    # 処置内容は 0始まりで 15 番目（P列）
+                    col_name_by_pos = cols[15]
+                    v = str(sub[col_name_by_pos].iloc[0] or "").strip()
+                    if v:
+                        rec["処置内容"] = v
+                except Exception:
+                    pass
 
     # 想定キーを一通り揃えておく（存在しないものは空文字に）
     expected_keys = [
