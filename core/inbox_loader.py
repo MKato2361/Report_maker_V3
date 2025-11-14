@@ -1,59 +1,94 @@
 # core/inbox_loader.py
 from __future__ import annotations
+
+from typing import Dict
+import os
+
 import pandas as pd
 import streamlit as st
 
-REQUIRED_COLS = [
-    "token","管理番号","通報者","受信内容","現着状況","原因","処置内容",
-    "所属","処理修理後","受信時刻","物件名","住所","メーカー","制御方式",
-    "契約種別","受付番号","受付URL","現着完了登録URL"
-]
 
 def _get_csv_url() -> str:
+    """
+    SHEET_CSV_URL を secrets または環境変数から取得する。
+    - .streamlit/secrets.toml に SHEET_CSV_URL="https://docs.google.com/....export?format=csv&gid=0"
+    - もしくは環境変数 SHEET_CSV_URL に同じURL
+    のどちらかで設定しておく想定。
+    """
+    url = ""
     try:
-        url = st.secrets["SHEET_CSV_URL"].strip()
+        url = st.secrets.get("SHEET_CSV_URL", "")  # type: ignore[attr-defined]
     except Exception:
-        raise RuntimeError(
-            "SHEET_CSV_URL が secrets に未設定です。"
-            " `.streamlit/secrets.toml` または Cloud Secrets に "
-            'SHEET_CSV_URL="https://docs.google.com/spreadsheets/d/<ID>/gviz/tq?tqx=out:csv&sheet=inbox" '
-            "を設定してください。"
-        )
+        url = ""
     if not url:
-        raise RuntimeError("SHEET_CSV_URL が空文字です。正しいCSVエクスポートURLを設定してください。")
+        url = os.getenv("SHEET_CSV_URL", "").strip()
+    if not url:
+        raise RuntimeError("SHEET_CSV_URL が secrets か環境変数に設定されていません。")
     return url
 
-def _read_csv(url: str) -> pd.DataFrame:
-    try:
-        # すべて文字列で読み込み（NaN→空文字に統一）
-        df = pd.read_csv(url, dtype=str).fillna("")
-        return df
-    except Exception as e:
-        raise RuntimeError(f"CSVの読み込みに失敗しました: {e}")
 
-def load_from_sheet_by_token(token: str) -> dict | None:
+def _load_dataframe():
     """
-    Gmail→GASでシートに追記された1行を token で取得し、辞書で返す。
-    見つからなければ None。
+    Google スプレッドシートの CSV (export?format=csv...) を DataFrame で取得。
     """
-    if not token:
-        return None
-
     url = _get_csv_url()
-    df = _read_csv(url)
+    df = pd.read_csv(url, dtype=str)
+    # NaN を空文字に統一
+    df = df.fillna("")
+    return df
 
+
+def load_from_sheet_by_token(token: str) -> Dict[str, str]:
+    """
+    inbox シート由来の CSV から token 行を 1件だけ取得し、
+    Step3 用の辞書（extracted と同じキー構成）を返す。
+    """
+    df = _load_dataframe()
     if "token" not in df.columns:
-        raise RuntimeError('CSVに "token" 列が見つかりません。シートのヘッダ行をREADME通りにしてください。')
+        raise RuntimeError('CSV に "token" 列がありません。inbox シートの1列目に token を配置してください。')
 
-    hit = df.loc[df["token"] == token]
-    if hit.empty:
-        return None
+    sub = df[df["token"] == token]
+    if sub.empty:
+        raise KeyError(f"token={token!r} の行が見つかりません。")
 
-    rec = hit.iloc[0].to_dict()
+    row = sub.iloc[0].to_dict()
 
-    # 期待列が無ければ空文字で補完（テンプレ生成時のKeyErrorを防止）
-    for c in REQUIRED_COLS:
-        rec.setdefault(c, "")
+    # まずヘッダー名をそのままキーにして取り込む
+    rec: Dict[str, str] = {}
+    for col, val in row.items():
+        if col == "token":
+            continue
+        v = (val or "").strip()
+        rec[col] = v
+
+    # 想定キーを一通り揃えておく（存在しないものは空文字に）
+    expected_keys = [
+        "管理番号",
+        "物件名",
+        "住所",
+        "窓口会社",
+        "メーカー",
+        "制御方式",
+        "契約種別",
+        "受信時刻",
+        "現着時刻",
+        "完了時刻",
+        "通報者",
+        "受信内容",
+        "現着状況",
+        "原因",
+        "処置内容",
+        "対応者",
+        "送信者",
+        "完了連絡先1",
+        "受付番号",
+        "受付URL",
+        "現着完了登録URL",
+        "所属",
+        "処理修理後",
+        "作業時間_分",
+    ]
+    for key in expected_keys:
+        rec.setdefault(key, "")
 
     return rec
-
