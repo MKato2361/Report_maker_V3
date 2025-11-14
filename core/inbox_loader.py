@@ -17,7 +17,6 @@ def _get_csv_url() -> str:
     """
     url = ""
     try:
-        # st.secrets が使える場合
         url = st.secrets.get("SHEET_CSV_URL", "")  # type: ignore[attr-defined]
     except Exception:
         url = ""
@@ -34,7 +33,6 @@ def _load_dataframe() -> pd.DataFrame:
     """
     url = _get_csv_url()
     df = pd.read_csv(url, dtype=str)
-    # NaN を空文字に統一
     df = df.fillna("")
     return df
 
@@ -46,8 +44,8 @@ def load_from_sheet_by_token(token: str) -> Dict[str, str]:
 
     ★ ポイント：
       - シート側のヘッダーが多少違っていても、ここで正規化する
-        例）「現着時間」→「現着時刻」, 「処置」→「処置内容」, 「窓口」→「窓口会社」など
-      - さらに「処置」という文字を含む列は最後の保険として「処置内容」として拾う
+      - 特に「処置内容」は DataFrame の列から“直接”拾う保険を入れて、
+        ヘッダー名の微妙なズレや不可視文字の影響を受けにくくする
     """
     df = _load_dataframe()
     if "token" not in df.columns:
@@ -57,10 +55,10 @@ def load_from_sheet_by_token(token: str) -> Dict[str, str]:
     if sub.empty:
         raise KeyError(f"token={token!r} の行が見つかりません。")
 
-    row = sub.iloc[0].to_dict()
+    # 単一行の Series
+    row_series = sub.iloc[0]
 
     # ヘッダー名 → 正規化されたキーへのマッピング
-    # 左がシートに実際に書かれている可能性のある列名、右がアプリ内部で使う正式キー
     header_aliases: Dict[str, str] = {
         "窓口": "窓口会社",
         "窓口会社": "窓口会社",
@@ -74,32 +72,35 @@ def load_from_sheet_by_token(token: str) -> Dict[str, str]:
         "詳細はこちら": "受付URL",
         "現着完了登録URL": "現着完了登録URL",
         "現着・完了登録はこちら": "現着完了登録URL",
-        # その他のキーはそのまま使う前提（管理番号 / 物件名 / 住所 / メーカー / 契約種別 等）
     }
 
     rec: Dict[str, str] = {}
 
-    # シート1行分を alias を使って正規化しながらディクショナリ化
-    for col, val in row.items():
+    # まず alias を使って行全体を辞書化
+    for col, val in row_series.to_dict().items():
         if col == "token":
             continue
         v = (val or "").strip()
-        # ヘッダー名を軽く正規化（前後スペース削除）
-        col_norm = (str(col).strip() if col is not None else "")
-        key = header_aliases.get(col_norm, col_norm)  # 別名があれば置き換え
+        col_norm = str(col).strip()
+        key = header_aliases.get(col_norm, col_norm)
         rec[key] = v
 
-    # ★ まだ「処置内容」が空なら、「処置」を含む列から保険で拾う
+    # ★ 「処置内容」を DataFrame の列からダイレクトに取得する保険
     if not (rec.get("処置内容") or "").strip():
-        for col, val in row.items():
-            if col == "token":
-                continue
-            col_str = str(col).strip()
-            if "処置" in col_str:
-                v = (val or "").strip()
-                if v:
-                    rec["処置内容"] = v
-                    break
+        # 1) 正確な列名「処置内容」が存在する場合
+        if "処置内容" in sub.columns:
+            v = str(sub["処置内容"].iloc[0] or "").strip()
+            if v:
+                rec["処置内容"] = v
+        # 2) それでも空なら、「処置」を含む列を総当たりで探す
+        if not (rec.get("処置内容") or "").strip():
+            for col in sub.columns:
+                col_str = str(col).strip()
+                if "処置" in col_str:
+                    v = str(sub[col].iloc[0] or "").strip()
+                    if v:
+                        rec["処置内容"] = v
+                        break
 
     # 想定キーを一通り揃えておく（存在しないものは空文字に）
     expected_keys = [
