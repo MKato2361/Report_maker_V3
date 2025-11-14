@@ -47,6 +47,7 @@ def load_from_sheet_by_token(token: str) -> Dict[str, str]:
     ★ ポイント：
       - シート側のヘッダーが多少違っていても、ここで正規化する
         例）「現着時間」→「現着時刻」, 「処置」→「処置内容」, 「窓口」→「窓口会社」など
+      - さらに「処置」という文字を含む列は最後の保険として「処置内容」として拾う
     """
     df = _load_dataframe()
     if "token" not in df.columns:
@@ -73,7 +74,7 @@ def load_from_sheet_by_token(token: str) -> Dict[str, str]:
         "詳細はこちら": "受付URL",
         "現着完了登録URL": "現着完了登録URL",
         "現着・完了登録はこちら": "現着完了登録URL",
-        # そのほかのキーはそのまま使う前提（管理番号 / 物件名 / 住所 / メーカー / 契約種別 等）
+        # その他のキーはそのまま使う前提（管理番号 / 物件名 / 住所 / メーカー / 契約種別 等）
     }
 
     rec: Dict[str, str] = {}
@@ -83,8 +84,22 @@ def load_from_sheet_by_token(token: str) -> Dict[str, str]:
         if col == "token":
             continue
         v = (val or "").strip()
-        key = header_aliases.get(col, col)  # 別名があれば置き換え
+        # ヘッダー名を軽く正規化（前後スペース削除）
+        col_norm = (str(col).strip() if col is not None else "")
+        key = header_aliases.get(col_norm, col_norm)  # 別名があれば置き換え
         rec[key] = v
+
+    # ★ まだ「処置内容」が空なら、「処置」を含む列から保険で拾う
+    if not (rec.get("処置内容") or "").strip():
+        for col, val in row.items():
+            if col == "token":
+                continue
+            col_str = str(col).strip()
+            if "処置" in col_str:
+                v = (val or "").strip()
+                if v:
+                    rec["処置内容"] = v
+                    break
 
     # 想定キーを一通り揃えておく（存在しないものは空文字に）
     expected_keys = [
