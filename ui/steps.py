@@ -193,6 +193,19 @@ def render_app():
     if st.session_state.step == 3 and st.session_state.authed:
         st.subheader("Step 3. 抽出結果の確認・編集 → Excel生成")
 
+        # ★ 処置内容フォールバック：
+        #   extracted 内で「処置内容」が空の場合、
+        #   キー名に「処置」を含む項目から値を拾ってくる（トークン経路の最終保険）
+        if st.session_state.extracted is not None:
+            ex = st.session_state.extracted
+            if not (ex.get("処置内容") or "").strip():
+                for k, v in list(ex.items()):
+                    if "処置" in str(k) and k != "処置内容":
+                        if isinstance(v, str) and v.strip():
+                            ex["処置内容"] = v.strip()
+                            st.session_state.extracted = ex
+                            break
+
         # Step2で入力した「処理修理後」を一度だけ抽出結果に反映
         if "processing_after" in st.session_state and st.session_state.extracted is not None:
             if not st.session_state.extracted.get("_processing_after_initialized"):
