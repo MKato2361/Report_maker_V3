@@ -11,12 +11,13 @@ import streamlit as st
 def _get_csv_url() -> str:
     """
     SHEET_CSV_URL を secrets または環境変数から取得する。
-    - .streamlit/secrets.toml に SHEET_CSV_URL="https://docs.google.com/....export?format=csv&gid=0"
+    - .streamlit/secrets.toml に SHEET_CSV_URL="https://docs.google.com/...export?format=csv&gid=0"
     - もしくは環境変数 SHEET_CSV_URL に同じURL
     のどちらかで設定しておく想定。
     """
     url = ""
     try:
+        # st.secrets が使える場合
         url = st.secrets.get("SHEET_CSV_URL", "")  # type: ignore[attr-defined]
     except Exception:
         url = ""
@@ -27,7 +28,7 @@ def _get_csv_url() -> str:
     return url
 
 
-def _load_dataframe():
+def _load_dataframe() -> pd.DataFrame:
     """
     Google スプレッドシートの CSV (export?format=csv...) を DataFrame で取得。
     """
@@ -42,6 +43,10 @@ def load_from_sheet_by_token(token: str) -> Dict[str, str]:
     """
     inbox シート由来の CSV から token 行を 1件だけ取得し、
     Step3 用の辞書（extracted と同じキー構成）を返す。
+
+    ★ ポイント：
+      - シート側のヘッダーが多少違っていても、ここで正規化する
+        例）「現着時間」→「現着時刻」, 「処置」→「処置内容」, 「窓口」→「窓口会社」など
     """
     df = _load_dataframe()
     if "token" not in df.columns:
@@ -53,13 +58,33 @@ def load_from_sheet_by_token(token: str) -> Dict[str, str]:
 
     row = sub.iloc[0].to_dict()
 
-    # まずヘッダー名をそのままキーにして取り込む
+    # ヘッダー名 → 正規化されたキーへのマッピング
+    # 左がシートに実際に書かれている可能性のある列名、右がアプリ内部で使う正式キー
+    header_aliases: Dict[str, str] = {
+        "窓口": "窓口会社",
+        "窓口会社": "窓口会社",
+        "現着時間": "現着時刻",
+        "現着時刻": "現着時刻",
+        "完了時間": "完了時刻",
+        "完了時刻": "完了時刻",
+        "処置": "処置内容",
+        "処置内容": "処置内容",
+        "受付URL": "受付URL",
+        "詳細はこちら": "受付URL",
+        "現着完了登録URL": "現着完了登録URL",
+        "現着・完了登録はこちら": "現着完了登録URL",
+        # そのほかのキーはそのまま使う前提（管理番号 / 物件名 / 住所 / メーカー / 契約種別 等）
+    }
+
     rec: Dict[str, str] = {}
+
+    # シート1行分を alias を使って正規化しながらディクショナリ化
     for col, val in row.items():
         if col == "token":
             continue
         v = (val or "").strip()
-        rec[col] = v
+        key = header_aliases.get(col, col)  # 別名があれば置き換え
+        rec[key] = v
 
     # 想定キーを一通り揃えておく（存在しないものは空文字に）
     expected_keys = [
@@ -86,6 +111,7 @@ def load_from_sheet_by_token(token: str) -> Dict[str, str]:
         "現着完了登録URL",
         "所属",
         "処理修理後",
+        "作業時間_分",
     ]
     for key in expected_keys:
         rec.setdefault(key, "")
