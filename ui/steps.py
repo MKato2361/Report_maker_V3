@@ -46,7 +46,6 @@ def _fmt_minutes(v):
 
 def _maybe_load_by_token():
     """
-    ★ Plan A:
     token= がURLに付いていたら、シートから行を取り込み、
     そのまま認証も通して Step3 へ直行させる。
     """
@@ -72,7 +71,7 @@ def _maybe_load_by_token():
         return
 
     if rec:
-        # 🔴 トークンを知っていればOKという運用：認証も通す
+        # トークンを知っていればOKという運用：認証も通す
         st.session_state.authed = True
         # inbox の列名 = キーそのままを全部使う
         st.session_state.extracted = rec.copy()
@@ -328,6 +327,13 @@ def render_app():
             st.error(f"テンプレート書き込み中にエラーが発生しました: {e}")
             with st.expander("詳細（開発者向け）"):
                 st.code("".join(traceback.format_exception(*sys.exc_info())), language="python")
+
+        # ★ デバッグ用：抽出データの中身を確認
+        with st.expander("🛠 デバッグ：抽出データ確認（問題解決したら閉じてOK）", expanded=False):
+            st.write("▼ st.session_state.extracted:")
+            st.json(st.session_state.extracted)
+            st.write("▼ get_working_dict():")
+            st.json(get_working_dict())
 
         c1, c2 = st.columns(2)
         with c1:
