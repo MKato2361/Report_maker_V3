@@ -86,7 +86,6 @@ def load_from_sheet_by_token(token: str) -> Dict[str, str]:
         "現着完了登録URL",
         "所属",
         "処理修理後",
-        "作業時間_分",
     ]
     for key in expected_keys:
         rec.setdefault(key, "")
