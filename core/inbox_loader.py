@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Dict
 import os
+import unicodedata
 
 import pandas as pd
 import streamlit as st
@@ -30,12 +31,18 @@ def _get_csv_url() -> str:
 def _load_dataframe() -> pd.DataFrame:
     """
     Google スプレッドシートの CSV (export?format=csv...) を DataFrame で取得。
-    1行目はヘッダーだが、列順だけを信用し、列名はほぼ無視する。
+    1行目はヘッダーとして扱う。
     """
     url = _get_csv_url()
-    df = pd.read_csv(url, dtype=str)
+    # UTF-8 BOM 対策で encoding を utf-8-sig にしておく
+    df = pd.read_csv(url, dtype=str, encoding="utf-8-sig")
     df = df.fillna("")
     return df
+
+
+def _norm(s: str) -> str:
+    """ヘッダー名の正規化（NFKC＋小文字＋前後空白除去）"""
+    return unicodedata.normalize("NFKC", str(s)).strip().lower()
 
 
 def load_from_sheet_by_token(token: str) -> Dict[str, str]:
@@ -59,7 +66,7 @@ def load_from_sheet_by_token(token: str) -> Dict[str, str]:
         M: 受信内容
         N: 現着状況
         O: 原因
-        P: 処置内容
+        P: 処置内容   ← 問題の列（index 15）
         Q: 対応者
         R: 送信者
         S: 完了連絡先1
@@ -71,57 +78,72 @@ def load_from_sheet_by_token(token: str) -> Dict[str, str]:
         Y: 作業時間_分
     """
     df = _load_dataframe()
-    if "token" not in df.columns:
-        raise RuntimeError('CSV に "token" 列がありません。inbox シートの1列目に token を配置してください。')
 
-    sub = df[df["token"] == token]
+    # --- どの列が token なのかを「名前」で特定（BOMや全角を吸収） ---
+    norm_cols = [_norm(c) for c in df.columns]
+    try:
+        token_col = df.columns[norm_cols.index("token")]
+    except ValueError:
+        raise RuntimeError(
+            f'CSV のヘッダーに "token" 列が見つかりません。現在のヘッダー: {list(df.columns)!r}'
+        )
+
+    # token で対象行を絞り込む
+    sub = df[df[token_col] == token]
     if sub.empty:
         raise KeyError(f"token={token!r} の行が見つかりません。")
 
-    # 単一行の値を「配列」として取得（列名は一切信用しない）
+    # 単一行
     row = sub.iloc[0]
-    values = list(row)
 
-    # 想定キー（列順と1対1対応）
+    # DataFrame 上の「列名」と「値」をそのまま記録しておく（デバッグ用）
+    columns = [str(c) for c in sub.columns]
+    values_raw = [("" if v is None else str(v)) for v in row.tolist()]
+
+    # 想定キー（inbox の列順と 1:1 対応させる）
     pos_keys = [
-        "token",        # A列
-        "管理番号",      # B列
-        "物件名",        # C列
-        "住所",          # D列
-        "窓口会社",      # E列
-        "メーカー",      # F列
-        "制御方式",      # G列
-        "契約種別",      # H列
-        "受信時刻",      # I列
-        "現着時刻",      # J列
-        "完了時刻",      # K列
-        "通報者",        # L列
-        "受信内容",      # M列
-        "現着状況",      # N列
-        "原因",          # O列
-        "処置内容",      # P列 ★ここが確実に処置内容
-        "対応者",        # Q列
-        "送信者",        # R列
-        "完了連絡先1",    # S列
-        "受付番号",      # T列
-        "受付URL",       # U列
-        "現着完了登録URL",# V列
-        "所属",          # W列
-        "処理修理後",     # X列
-        "作業時間_分",    # Y列
+        "token",        # index 0  = A列
+        "管理番号",      # 1        = B列
+        "物件名",        # 2        = C列
+        "住所",          # 3        = D列
+        "窓口会社",      # 4        = E列
+        "メーカー",      # 5        = F列
+        "制御方式",      # 6        = G列
+        "契約種別",      # 7        = H列
+        "受信時刻",      # 8        = I列
+        "現着時刻",      # 9        = J列
+        "完了時刻",      # 10       = K列
+        "通報者",        # 11       = L列
+        "受信内容",      # 12       = M列
+        "現着状況",      # 13       = N列
+        "原因",          # 14       = O列
+        "処置内容",      # 15       = P列 ← ここが本命
+        "対応者",        # 16       = Q列
+        "送信者",        # 17       = R列
+        "完了連絡先1",    # 18       = S列
+        "受付番号",      # 19       = T列
+        "受付URL",       # 20       = U列
+        "現着完了登録URL",# 21       = V列
+        "所属",          # 22       = W列
+        "処理修理後",     # 23       = X列
+        "作業時間_分",    # 24       = Y列
     ]
 
-    # CSV 側の列数が足りなければ空文字で埋める
-    if len(values) < len(pos_keys):
-        values = values + [""] * (len(pos_keys) - len(values))
-
-    # 余分な列があっても無視（pos_keys の長さに合わせる）
-    values = values[:len(pos_keys)]
+    # values_raw の長さと pos_keys の長さがズレていればここで補正
+    if len(values_raw) < len(pos_keys):
+        # 足りない分は空文字で埋める
+        values = values_raw + [""] * (len(pos_keys) - len(values_raw))
+    else:
+        # 余っている場合は pos_keys の分だけ使う
+        values = values_raw[: len(pos_keys)]
 
     # 位置で dict 化
-    data_by_pos = {k: (str(v).strip() if v is not None else "") for k, v in zip(pos_keys, values)}
+    data_by_pos = {
+        key: (val.strip() if isinstance(val, str) else "")
+        for key, val in zip(pos_keys, values)
+    }
 
-    # token は返さない（必要ならここで返してもよいが、UI 側では使っていない）
+    # token は返さない
     rec: Dict[str, str] = {k: v for k, v in data_by_pos.items() if k != "token"}
 
     # 念のため、想定キーをすべて埋めておく
@@ -153,5 +175,11 @@ def load_from_sheet_by_token(token: str) -> Dict[str, str]:
     ]
     for key in expected_keys:
         rec.setdefault(key, "")
+
+    # --- デバッグ情報を付与（Step3 の「🛠デバッグ」枠で確認用） ---
+    # 列名の順番（index付き）
+    rec["_DEBUG_COLUMNS"] = " | ".join(f"[{i}]{c}" for i, c in enumerate(columns))
+    # 行の値（index付き）
+    rec["_DEBUG_VALUES"] = " | ".join(f"[{i}]{v}" for i, v in enumerate(values_raw))
 
     return rec
