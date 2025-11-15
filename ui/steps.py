@@ -35,6 +35,7 @@ def _init_session():
 
 
 def _fmt_minutes(v):
+    """分を「◯時間YY分」または「X分」に整形"""
     if v is None or v < 0:
         return "—"
     if v >= 60:
@@ -73,7 +74,8 @@ def _maybe_load_by_token():
     if rec:
         # トークンを知っていればOKという運用：認証も通す
         st.session_state.authed = True
-        # inbox の列名 = キーそのままを全部使う
+
+        # inbox のキー群をそのまま採用
         st.session_state.extracted = rec.copy()
 
         # 所属 / 処理修理後 も session_state に反映しておく
@@ -82,6 +84,7 @@ def _maybe_load_by_token():
 
         st.session_state.step = 3
         st.session_state.token_loaded = True
+
         # 反映のため再実行
         try:
             st.rerun()
@@ -328,12 +331,28 @@ def render_app():
             with st.expander("詳細（開発者向け）"):
                 st.code("".join(traceback.format_exception(*sys.exc_info())), language="python")
 
-        # ★ デバッグ用：抽出データの中身を確認
+        # ★ デバッグ用：抽出データの中身＋inbox生データを確認
         with st.expander("🛠 デバッグ：抽出データ確認（問題解決したら閉じてOK）", expanded=False):
+            ex = st.session_state.extracted or {}
+
             st.write("▼ st.session_state.extracted:")
-            st.json(st.session_state.extracted)
+            st.json(ex)
+
             st.write("▼ get_working_dict():")
             st.json(get_working_dict())
+
+            # inbox_loader 側から渡された CSV 生情報
+            if "_DEBUG_COLUMNS" in ex or "_DEBUG_VALUES" in ex:
+                st.write("▼ inbox CSV columns（左からの並び）:")
+                st.text(ex.get("_DEBUG_COLUMNS", ""))
+
+                st.write("▼ inbox CSV row values（同じ順番）:")
+                st.text(ex.get("_DEBUG_VALUES", ""))
+
+            # RAW_JSON（もし JSON 方式に切り替えた場合の確認用）
+            if "_RAW_JSON" in ex:
+                st.write("▼ RAW_JSON（GAS側で保存した生データ）:")
+                st.text(ex.get("_RAW_JSON", ""))
 
         c1, c2 = st.columns(2)
         with c1:
