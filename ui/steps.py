@@ -1,10 +1,23 @@
-# ui/steps.py  — Plan A: トークン到着で認証もスキップしてStep3へ直行版
-import os, sys, traceback
+# ui/steps.py
+# ------------------------------------------------------------
+# Step1: パスコード認証
+# Step2: メール本文貼付 or token直行
+# Step3: 抽出結果確認・編集 → Excel生成
+# ------------------------------------------------------------
+import os
+import sys
+import traceback
+
 import streamlit as st
+
 from core.settings import REQUIRED_KEYS
 from core.state import (
-    get_passcode, ensure_extracted, enter_edit_mode, cancel_edit, save_edit,
-    get_working_dict
+    get_passcode,
+    ensure_extracted,
+    enter_edit_mode,
+    cancel_edit,
+    save_edit,
+    get_working_dict,
 )
 from core.parsing import extract_fields, minutes_between
 from core.excel_writer import fill_template_xlsx, build_filename
@@ -12,6 +25,9 @@ from core.inbox_loader import load_from_sheet_by_token
 from ui.components import render_field
 
 
+# =======================
+# セッション初期化
+# =======================
 def _init_session():
     if "step" not in st.session_state:
         st.session_state.step = 1
@@ -34,8 +50,36 @@ def _init_session():
     ensure_extracted()
 
 
+# =======================
+# テンプレート確保
+# =======================
+def _ensure_template_loaded():
+    """
+    st.session_state.template_xlsx_bytes が空の場合、
+    カレントディレクトリの template.xlsm を探して読み込む。
+    Step2, Step3 の両方から呼ぶ。
+    """
+    if st.session_state.get("template_xlsx_bytes"):
+        return
+
+    default_path = "template.xlsm"
+    if os.path.exists(default_path):
+        try:
+            with open(default_path, "rb") as f:
+                st.session_state.template_xlsx_bytes = f.read()
+            # 何度も出るとうるさいので toast 程度に
+            st.toast(f"テンプレートを読み込みました: {default_path}")
+        except Exception as e:
+            st.error(f"テンプレート読み込みに失敗しました: {e}")
+    else:
+        # 本当に無い場合はここでは何もしない
+        pass
+
+
+# =======================
+# 分表示フォーマット
+# =======================
 def _fmt_minutes(v):
-    """分を「◯時間YY分」または「X分」に整形"""
     if v is None or v < 0:
         return "—"
     if v >= 60:
@@ -45,23 +89,25 @@ def _fmt_minutes(v):
     return f"{v}分"
 
 
+# =======================
+# token=xxx が付いていたら inbox からロード
+# =======================
 def _maybe_load_by_token():
     """
-    token= がURLに付いていたら、シートから行を取り込み、
-    そのまま認証も通して Step3 へ直行させる。
+    URL のクエリに token= が付いていたら、inbox シートから行を取得して
+    認証も通した状態で Step3 へ直行させる。
     """
     token = None
     try:
-        # Streamlit 1.38+ の query_params
+        # Streamlit 1.38+ の新しい API
         qp = st.query_params
         token = qp.get("token")
         if isinstance(token, list):
             token = token[0] if token else None
     except Exception:
-        # Fallback for older versions
+        # 古いバージョン向け Fallback
         token = st.experimental_get_query_params().get("token", [None])[0]
 
-    # すでにトークン読込済みなら再処理しない
     if not token or st.session_state.get("token_loaded"):
         return
 
@@ -74,14 +120,9 @@ def _maybe_load_by_token():
     if rec:
         # トークンを知っていればOKという運用：認証も通す
         st.session_state.authed = True
-
-        # inbox のキー群をそのまま採用
         st.session_state.extracted = rec.copy()
-
-        # 所属 / 処理修理後 も session_state に反映しておく
         st.session_state.affiliation = rec.get("所属", "") or ""
         st.session_state.processing_after = rec.get("処理修理後", "") or ""
-
         st.session_state.step = 3
         st.session_state.token_loaded = True
 
@@ -92,16 +133,22 @@ def _maybe_load_by_token():
             st.experimental_rerun()
 
 
+# =======================
+# メインエントリ
+# =======================
 def render_app():
     _init_session()
     _maybe_load_by_token()
     PASSCODE = get_passcode()
 
-    # Step 1: 認証
+    # -----------------------
+    # Step 1: パスコード認証
+    # -----------------------
     if st.session_state.step == 1:
         st.subheader("Step 1. パスコード認証")
         if not PASSCODE:
             st.info("（注意）現在、PASSCODEが未設定です。開発モード想定で空文字として扱います。")
+
         pw = st.text_input("パスコードを入力してください", type="password")
         if st.button("次へ", use_container_width=True):
             if pw == PASSCODE:
@@ -115,29 +162,21 @@ def render_app():
                 st.error("パスコードが違います。")
         return
 
+    # -----------------------
     # Step 2: 本文貼付け / 所属 / テンプレ選択
+    # -----------------------
     if st.session_state.step == 2 and st.session_state.authed:
         st.subheader("Step 2. メール本文の貼り付け / 所属 / テンプレ選択")
 
-        template_path = "template.xlsm"
         tpl_col1, tpl_col2 = st.columns([0.55, 0.45])
-
-        # ① 既定テンプレ
         with tpl_col1:
             st.caption("① 既定：template.xlsm を探します")
-            if os.path.exists(template_path) and not st.session_state.template_xlsx_bytes:
-                try:
-                    with open(template_path, "rb") as f:
-                        st.session_state.template_xlsx_bytes = f.read()
-                    st.success(f"テンプレートを読み込みました: {template_path}")
-                except Exception as e:
-                    st.error(f"テンプレートの読み込みに失敗: {e}")
-            elif st.session_state.template_xlsx_bytes:
+            _ensure_template_loaded()
+            if st.session_state.get("template_xlsx_bytes"):
                 st.success("テンプレートは読み込み済みです。")
             else:
                 st.warning("既定テンプレートが見つかりません。②のアップロードをご利用ください。")
 
-        # ② 手動アップロード
         with tpl_col2:
             st.caption("② またはテンプレ.xlsmをアップロード")
             up = st.file_uploader("テンプレート（.xlsm）", type=["xlsm"], accept_multiple_files=False)
@@ -149,22 +188,19 @@ def render_app():
             st.error("テンプレートが未準備です。template.xlsm を配置するか、上でアップロードしてください。")
             st.stop()
 
-        # 所属
         aff = st.text_input("所属", value=st.session_state.affiliation)
         st.session_state.affiliation = aff
 
-        # 処理修理後（任意）
         processing_after = st.text_input(
             "処理修理後（任意）",
-            value=st.session_state.get("processing_after", "")
+            value=st.session_state.get("processing_after", ""),
         )
         st.session_state["processing_after"] = processing_after
 
-        # 本文入力
         text = st.text_area(
             "故障完了メール（本文）を貼り付け",
             height=240,
-            placeholder="ここにメール本文を貼り付け..."
+            placeholder="ここにメール本文を貼り付け...",
         )
 
         c1, c2 = st.columns(2)
@@ -191,30 +227,22 @@ def render_app():
                     st.experimental_rerun()
         return
 
+    # -----------------------
     # Step 3: 確認・編集 → Excel生成
+    # -----------------------
     if st.session_state.step == 3 and st.session_state.authed:
+        # token直行時などに備えてここでもテンプレ確認
+        _ensure_template_loaded()
+
         st.subheader("Step 3. 抽出結果の確認・編集 → Excel生成")
 
-        # ★ 処置内容フォールバック：
-        #   extracted 内で「処置内容」が空の場合、
-        #   キー名に「処置」を含む項目から値を拾ってくる（トークン経路の最終保険）
-        if st.session_state.extracted is not None:
-            ex = st.session_state.extracted
-            if not (ex.get("処置内容") or "").strip():
-                for k, v in list(ex.items()):
-                    if "処置" in str(k) and k != "処置内容":
-                        if isinstance(v, str) and v.strip():
-                            ex["処置内容"] = v.strip()
-                            st.session_state.extracted = ex
-                            break
-
-        # Step2で入力した「処理修理後」を一度だけ抽出結果に反映
+        # Step2 で入力した「処理修理後」を初回だけ反映
         if "processing_after" in st.session_state and st.session_state.extracted is not None:
             if not st.session_state.extracted.get("_processing_after_initialized"):
                 st.session_state.extracted["処理修理後"] = st.session_state.get("processing_after", "")
                 st.session_state.extracted["_processing_after_initialized"] = True
 
-        # ① 編集対象（まとめて編集）：枠内に薄めボタン
+        # ① 編集対象（まとめて編集・すべて必須）: 枠内に薄めボタン
         with st.expander("① 編集対象（まとめて編集・すべて必須）", expanded=True):
             c_left, c_mid, c_right = st.columns([1, 1, 1])
             with c_right:
@@ -250,8 +278,8 @@ def render_app():
             render_field("現着状況", "現着状況", 5, editable_in_bulk=True)
             render_field("原因", "原因", 5, editable_in_bulk=True)
             render_field("処置内容", "処置内容", 5, editable_in_bulk=True)
-            render_field("処理修理後（Step2入力値）", "処理修理後", 1, editable_in_bulk=True)
-            render_field("所属（Step2入力値）", "所属", 1, editable_in_bulk=True)
+            render_field("処理修理後", "処理修理後", 1, editable_in_bulk=True)
+            render_field("所属", "所属", 1, editable_in_bulk=True)
 
         # ② 基本情報（表示）
         with st.expander("② 基本情報（表示）", expanded=True):
@@ -296,6 +324,45 @@ def render_app():
         try:
             is_editing = st.session_state.get("edit_mode", False)
             gen_data = get_working_dict()
+
+            # まずテンプレがあるか確認
+            if not st.session_state.get("template_xlsx_bytes"):
+                st.error(
+                    "テンプレート（.xlsm）が読み込まれていません。"
+                    "Step2でテンプレートを設定するか、template.xlsm を配置してください。"
+                )
+                st.download_button(
+                    "Excelを生成（.xlsm）",
+                    data=b"",
+                    file_name="未生成.xlsm",
+                    mime="application/vnd.ms-excel.sheet.macroEnabled.12",
+                    use_container_width=True,
+                    disabled=True,
+                    help="テンプレート未読み込みのため生成できません。",
+                )
+                # ここで処理終了
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.button("Step2に戻る", use_container_width=True):
+                        st.session_state.step = 2
+                        try:
+                            st.rerun()
+                        except Exception:
+                            st.experimental_rerun()
+                with c2:
+                    if st.button("最初に戻る", use_container_width=True):
+                        st.session_state.step = 1
+                        st.session_state.extracted = None
+                        st.session_state.affiliation = ""
+                        st.session_state.processing_after = ""
+                        st.session_state.edit_mode = False
+                        st.session_state.edit_buffer = {}
+                        try:
+                            st.rerun()
+                        except Exception:
+                            st.experimental_rerun()
+                return
+
             missing_now = [k for k in REQUIRED_KEYS if not (gen_data.get(k) or "").strip()]
             can_generate = (not is_editing) and (not missing_now)
 
@@ -331,7 +398,7 @@ def render_app():
             with st.expander("詳細（開発者向け）"):
                 st.code("".join(traceback.format_exception(*sys.exc_info())), language="python")
 
-
+        # 戻るボタン
         c1, c2 = st.columns(2)
         with c1:
             if st.button("Step2に戻る", use_container_width=True):
@@ -354,7 +421,9 @@ def render_app():
                     st.experimental_rerun()
         return
 
-    # 認証未了の場合はStep1へ
+    # -----------------------
+    # 認証未了の場合のフォールバック
+    # -----------------------
     st.warning("認証が必要です。Step1に戻ります。")
     st.session_state.step = 1
     try:
